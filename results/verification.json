@@ -1,0 +1,82 @@
+{
+ "orig_mean": {
+  "route": "lower",
+  "J": 201.68325791511072,
+  "J_mean": 201.68325791511072,
+  "J_cov": 0.0,
+  "rel_gap": 0.0,
+  "solve_time": 0.726926326751709,
+  "term_mean_err": 4.5038410374405025e-10,
+  "term_cov_lmax": 0.06879090249904728,
+  "chance_slack_max": 2.3573765162154814e-10,
+  "mc_cost": 201.68325791511074,
+  "mc_term_var_xy": [
+   0.07763968659571391,
+   0.07830527398064796
+  ],
+  "mc_face_viol_max": 0.00111,
+  "mc_step_coll_max": 0.00108,
+  "mc_traj_coll_sampled": 0.00125,
+  "mc_traj_coll_continuous": 0.001365
+ },
+ "orig_cov": {
+  "route": "upper",
+  "J": 116.4226200326785,
+  "J_mean": 115.99279945592193,
+  "J_cov": 0.4298205767565757,
+  "rel_gap": 5.374732632123586e-10,
+  "solve_time": 48.294511795043945,
+  "term_mean_err": 2.8357400754330647e-10,
+  "term_cov_lmax": -1.6812898794806854e-12,
+  "chance_slack_max": 4.831890443313114e-11,
+  "mc_cost": 116.41271129369692,
+  "mc_term_var_xy": [
+   0.009993964303610048,
+   0.010012102694994283
+  ],
+  "mc_face_viol_max": 0.00109,
+  "mc_step_coll_max": 0.0,
+  "mc_traj_coll_sampled": 0.0,
+  "mc_traj_coll_continuous": 1e-05
+ },
+ "narrow_mean": {
+  "route": "lower",
+  "J": 201.6832579150991,
+  "J_mean": 201.6832579150991,
+  "J_cov": 0.0,
+  "rel_gap": 0.0,
+  "solve_time": 0.6451668739318848,
+  "term_mean_err": 4.5079305199378563e-10,
+  "term_cov_lmax": 0.06879090249904728,
+  "chance_slack_max": 2.3598367704380507e-10,
+  "mc_cost": 201.68325791509912,
+  "mc_term_var_xy": [
+   0.07763968659571353,
+   0.07830527398064795
+  ],
+  "mc_face_viol_max": 0.00111,
+  "mc_step_coll_max": 0.00108,
+  "mc_traj_coll_sampled": 0.00125,
+  "mc_traj_coll_continuous": 0.001365
+ },
+ "narrow_cov": {
+  "route": "lower",
+  "J": 139.08438506039585,
+  "J_mean": 138.33604408740769,
+  "J_cov": 0.7483409729881532,
+  "rel_gap": 9.470253888188075e-06,
+  "solve_time": 40.00531530380249,
+  "term_mean_err": 2.2998625092934713e-09,
+  "term_cov_lmax": -1.3920698326545313e-11,
+  "chance_slack_max": 7.18217263440124e-10,
+  "mc_cost": 139.09798107833157,
+  "mc_term_var_xy": [
+   0.009992108061645659,
+   0.01002365323172019
+  ],
+  "mc_face_viol_max": 0.001145,
+  "mc_step_coll_max": 0.0,
+  "mc_traj_coll_sampled": 0.0,
+  "mc_traj_coll_continuous": 0.00011
+ }
+}

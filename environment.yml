@@ -1,0 +1,17 @@
+name: covsteer
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - numpy==2.4.6
+      - scipy==1.17.1
+      - matplotlib==3.11.2
+      - cvxpy==1.9.3
+      - clarabel==0.11.1
+      - Mosek==11.2.8
+      - ipykernel==7.4.0
+      - nbformat==5.11.1
+      - nbconvert==7.17.2
+      - pillow==13.0.0
