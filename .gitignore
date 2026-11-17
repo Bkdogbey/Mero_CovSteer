@@ -3,14 +3,6 @@ __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
 
-# Regenerable solver outputs (steps 5-6 recreate them; step 8 reads them)
-results/*.pkl
-results/*.log
-
-# Quarto render byproducts
-slides/*_files/
-slides/.quarto/
-
 # Paper PDF (copyrighted, not redistributed)
 *.pdf
 

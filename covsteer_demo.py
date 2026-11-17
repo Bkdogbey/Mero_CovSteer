@@ -193,7 +193,13 @@ def hits_obstacle(pos):
 # =============================================================================
 # 5. ANIMATION
 # =============================================================================
-BLUE, ORANGE, VERMILLION, PURPLE, GRAY = "#0072B2", "#E69F00", "#D55E00", "#CC79A7", "0.45"
+# Colors of the slide deck
+BLUE = "#2B5F9E"        # covariance steering
+BURNT = "#A64B14"       # mean steering
+ACCENT = "#FA6400"      # start, goal, crashes
+NAVY = "#14213D"        # obstacles
+GRAY = "0.45"           # vehicles
+PAPER = "#FDFCF9"       # background
 SUB = 8                       # animation frames per time step
 HOLD = 45                     # frames to hold the final picture
 N_VEHICLES = 300
@@ -203,35 +209,36 @@ def animate(plans, save):
     sims = [simulate(p, N_VEHICLES) for p in plans]
     saving = 1 - plans[1]["cost"] / plans[0]["cost"]
 
-    fig, axes = plt.subplots(1, 2, figsize=(13, 6.2))
+    fig, axes = plt.subplots(1, 2, figsize=(13, 6.2), facecolor=PAPER)
     fig.subplots_adjust(left=0.04, right=0.99, top=0.80, bottom=0.10, wspace=0.08)
     caption = fig.text(0.5, 0.93, "", ha="center", va="center", fontsize=13, wrap=True)
     titles = ["MEAN STEERING\nplans the average path only",
               "COVARIANCE STEERING\nplans the average path + shrinks the uncertainty"]
     art = []
-    for ax, p, title in zip(axes, plans, titles):
+    for ax, p, title, color in zip(axes, plans, titles, (BURNT, BLUE)):
+        ax.set_facecolor(PAPER)
         for x0, x1, y0, y1 in OBSTACLES:
-            ax.add_patch(Rectangle((x0, y0), x1 - x0, y1 - y0, color=VERMILLION))
+            ax.add_patch(Rectangle((x0, y0), x1 - x0, y1 - y0, color=NAVY))
         ax.text(-5, 2.3, "narrow slit\n(0.5 wide)\n↓", ha="center", va="center",
                 fontsize=9, color="white", fontweight="bold")
         ax.text(-5, -3.6, "↑\nwide slit\n(1.6 wide)", ha="center", va="center",
                 fontsize=9, color="white", fontweight="bold")
-        ax.plot(*ellipse(MU_START, SIGMA_START[:2, :2]), color=ORANGE, lw=2)
-        ax.plot(*ellipse(MU_GOAL, SIGMA_GOAL[:2, :2]), color=PURPLE, lw=2)
-        ax.text(-10, -0.95, "start", ha="center", color=ORANGE, fontsize=10)
-        ax.text(0, -0.65, "goal", ha="center", color=PURPLE, fontsize=10)
-        ax.plot(p["mean"][:, 0], p["mean"][:, 1], ":", color=BLUE, lw=1, alpha=0.5)
+        ax.plot(*ellipse(MU_START, SIGMA_START[:2, :2]), color=ACCENT, lw=2)
+        ax.plot(*ellipse(MU_GOAL, SIGMA_GOAL[:2, :2]), color=ACCENT, lw=2)
+        ax.text(-10, -0.95, "start", ha="center", color=ACCENT, fontsize=10)
+        ax.text(0, -0.65, "goal", ha="center", color=ACCENT, fontsize=10)
+        ax.plot(p["mean"][:, 0], p["mean"][:, 1], ":", color=color, lw=1, alpha=0.5)
         ax.set_xlim(-11.5, 1.2)
         ax.set_ylim(-4.2, 3.2)
         ax.set_aspect("equal")
         ax.set_xticks([])
         ax.set_yticks([])
         ax.set_title(title, fontsize=12, fontweight="bold")
-        trail = [ax.plot([], [], color=BLUE, lw=0.6, alpha=0.35)[0] for _ in range(N + 1)]
+        trail = [ax.plot([], [], color=color, lw=0.6, alpha=0.35)[0] for _ in range(N + 1)]
         dots = ax.scatter([], [], s=5, color=GRAY, zorder=3)
-        crashed = ax.scatter([], [], s=30, marker="x", color="k", zorder=4)
-        path, = ax.plot([], [], color=BLUE, lw=2.5, zorder=5)
-        ell, = ax.plot([], [], color=BLUE, lw=2.5, zorder=5)
+        crashed = ax.scatter([], [], s=30, marker="x", color=ACCENT, zorder=4)
+        path, = ax.plot([], [], color=color, lw=2.5, zorder=5)
+        ell, = ax.plot([], [], color=color, lw=2.5, zorder=5)
         info = ax.text(0.02, 0.03, "", transform=ax.transAxes, fontsize=10, family="monospace",
                        bbox=dict(fc="white", ec="0.7", alpha=0.9))
         art.append(dict(trail=trail, dots=dots, crashed=crashed, path=path, ell=ell, info=info,
@@ -246,7 +253,7 @@ def animate(plans, save):
             return ("Left: too wide for the narrow slit, so it must detour.   "
                     "Right: small enough to fit the short, narrow slit.")
         if t < 4.0:
-            return "Both reach the goal on time. Only feedback also meets the goal's size (purple circle)."
+            return "Both reach the goal on time. Only feedback also meets the goal's size (small orange circle)."
         return (f"Covariance steering: same safety, on target, with {saving:.0%} less control energy "
                 f"(J = {plans[1]['cost']:.0f} vs {plans[0]['cost']:.0f}).")
 

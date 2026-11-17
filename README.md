@@ -6,8 +6,6 @@ A Python reproduction of
 
 The method plans a vehicle's **mean path and its uncertainty** together. A feedback policy shrinks the state covariance where it matters, and chance constraints keep each obstacle face violated with probability at most ε. Obstacles are handled with mixed-integer region selection. The result: a planner that can take narrow passages a mean-only planner must avoid.
 
-![Double slit: mean steering vs covariance steering](figs/s16_double_slit.png)
-
 ## Results
 
 | Experiment | Planner | Route | Cost J |
@@ -23,17 +21,17 @@ The method plans a vehicle's **mean path and its uncertainty** together. A feedb
   - terminal covariance targets are met exactly;
   - covariance steering has zero collisions at the sampled time steps.
 
-  Full table: [`results/verification.md`](results/verification.md).
+  `python covsteer.py` prints the full table.
 
 ## Repository layout
 
 | Path | Contents |
 |---|---|
-| [`covsteer_repro.py`](covsteer_repro.py) | The whole method as steps 0–8, commented with the paper's equation numbers |
-| [`notebooks/covsteer_walkthrough.ipynb`](notebooks/covsteer_walkthrough.ipynb) | Teaching notebook: every equation derived, implemented, and checked |
-| [`slides/optimal_covariance_control.qmd`](slides/optimal_covariance_control.qmd) | Presentation source (Quarto → PowerPoint); rendered `.pptx` alongside |
-| `figs/` | Figures produced by the script, named after the slide they appear on |
-| `results/` | Verification table, width-sweep data |
+| [`covsteer.py`](covsteer.py) | The whole method as one pipeline (blocks 1–12), commented with the paper's equation numbers |
+| [`notebooks/covsteer_pipeline.ipynb`](notebooks/covsteer_pipeline.ipynb) | Presentation notebook: runs the blocks of `covsteer.py` one by one, each with what it does |
+| [`covsteer_demo.py`](covsteer_demo.py) | Classroom animation with captions: mean vs covariance steering through the double slit |
+| [`covsteer_demo_simple.py`](covsteer_demo_simple.py) | The same animation in about 60 lines, built on `covsteer.py` |
+| `results/` | Inputs the code reads: routes chosen by Algorithm 1 (`routes.json`) and the slit-width sweep (`width_sweep.json`) |
 
 ## Setup
 
@@ -43,29 +41,31 @@ conda activate covsteer
 python -m ipykernel install --user --name covsteer --display-name "Python (covsteer)"
 ```
 
-The mixed-integer steps (5–8) need [MOSEK](https://www.mosek.com/products/academic-licenses/), which offers free academic licenses. Put the license at `~/mosek/mosek.lic`. Steps 0–4 fall back to the open-source Clarabel solver.
+Algorithm 1 (the mixed-integer step) needs [MOSEK](https://www.mosek.com/products/academic-licenses/), which offers free academic licenses. Put the license at `~/mosek/mosek.lic` (Windows: `C:\Users\<you>\mosek\mosek.lic`).
+Without a license everything still runs: the route MOSEK chose is read from `results/routes.json`, and the rest of the problem, which is convex once the route is fixed, is solved with the open-source Clarabel solver. The costs come out the same.
 
 ## Usage
 
 ```bash
-python covsteer_repro.py --step N
+python covsteer.py            # whole pipeline: figures pop up, Monte Carlo table printed (~3 min with MOSEK, ~20 s without)
+python covsteer.py --sweep    # also re-run the slit-width sweep (~12 min, MOSEK)
+python covsteer_demo.py       # animation with captions
+python covsteer_demo_simple.py  # simpler animation
 ```
 
-| Step | What it does | Paper | Time |
-|---|---|---|---|
-| 0 | solver check | — | s |
-| 1 | double integrator, lifted dynamics (checked against step-by-step simulation) | Eq. 1, 7 | s |
-| 2 | open loop: the covariance only grows | Sec. I | s |
-| 3 | Theorem 1 covariance steering, no obstacles | Eq. 12–19 | s |
-| 4 | chance constraints through a narrow gate | Eq. 20 | s |
-| 5 | Algorithm 1 on the double slit | Eq. 22–25, Fig. 2–3 | ~1 min |
-| 6 | narrower upper slit | Fig. 4 | ~1 min |
-| 7 | slit-width sweep | — | ~12 min |
-| 8 | Monte Carlo verification (needs steps 5–6 first) | — | s |
+| Block in `covsteer.py` | What it does | Paper |
+|---|---|---|
+| 1–3 | problem data, vehicle model, lifted dynamics | Eq. 1, 7 |
+| 4 | policy: mean set by V, covariance set by K | Thm. 1, Eq. 12–16 |
+| 5 | open loop (K = 0): covariance only grows | Sec. I |
+| 6 | optimal covariance steering (closed loop) | Eq. 17–19 |
+| 7 | chance constraints | Eq. 20 |
+| 8 | obstacles: region selection | Eq. 22–25 |
+| 9 | Algorithm 1: mixed-integer solve, certified optimal | Figs. 2–4 |
+| 10 | Monte Carlo verification | — |
+| 11–12 | plots; `main()` runs the pipeline | — |
 
-Notebook: open `notebooks/covsteer_walkthrough.ipynb` with the **Python (covsteer)** kernel. It runs top to bottom in about 90 s.
-
-Slides: `quarto render slides/optimal_covariance_control.qmd`.
+Notebook: open `notebooks/covsteer_pipeline.ipynb` with the **Python (covsteer)** kernel and run all cells.
 
 ## Implementation notes
 
@@ -77,6 +77,4 @@ Slides: `quarto render slides/optimal_covariance_control.qmd`.
 - **Assumed** (the paper does not report them): initial and target distributions μ₀, Σ₀, Σ_N, and cost weights Q = 0, R = I.
 - **Reconstructed**: the obstacle and sub-region geometry was read off the paper's Figs. 2, 3, 4 and 6 by eye.
 
-Every assumed or reconstructed value is tagged `# ASSUMED` / `# RECONSTRUCTED` in the code.
 
-The paper PDF is not included in this repository.
