@@ -30,7 +30,7 @@ The method plans a vehicle's **mean path and its uncertainty** together. A feedb
 | [`covsteer.py`](covsteer.py) | The whole method as one pipeline (blocks 1–12), commented with the paper's equation numbers |
 | [`notebooks/covsteer_pipeline.ipynb`](notebooks/covsteer_pipeline.ipynb) | Presentation notebook: runs the blocks of `covsteer.py` one by one, each with what it does |
 | [`covsteer_demo.py`](covsteer_demo.py) | Classroom animation with captions: mean vs covariance steering through the double slit |
-| [`covsteer_demo_simple.py`](covsteer_demo_simple.py) | The same animation in about 60 lines, built on `covsteer.py` |
+| [`covsteer_demo_simple.py`](covsteer_demo_simple.py) | Standalone simplified implementation: fixed region schedules, fresh convex solves, and static plots |
 | `results/` | Inputs the code reads: routes chosen by Algorithm 1 (`routes.json`) and the slit-width sweep (`width_sweep.json`) |
 
 ## Setup
@@ -47,11 +47,27 @@ Without a license everything still runs: the route MOSEK chose is read from `res
 ## Usage
 
 ```bash
-python covsteer.py            # whole pipeline: figures pop up, Monte Carlo table printed (~3 min with MOSEK, ~20 s without)
-python covsteer.py --sweep    # also re-run the slit-width sweep (~12 min, MOSEK)
+python covsteer.py            # five-stage walkthrough, static figures, and verification
+python covsteer.py --saved-routes  # use saved region schedules; optimize controls with Clarabel
+python covsteer.py --samples 10000 # shorter Monte Carlo check for rehearsal
+python covsteer.py --sweep    # also re-run the slit-width sweep (licensed MOSEK)
 python covsteer_demo.py       # animation with captions
-python covsteer_demo_simple.py  # simpler animation
+python covsteer_demo_simple.py  # standalone simplified implementation with static plots
 ```
+
+The walkthrough follows five stages: task, open-loop uncertainty, feedback,
+obstacle planning, and verification. It prints a compact table of route, energy,
+and terminal covariance results before the detailed Monte Carlo checks.
+The width sweep runs only with `--sweep`.
+
+The obstacle solve mode is printed at startup and for each solution. With MOSEK,
+the code optimizes the region schedule and controls. With `--saved-routes`, or
+when MOSEK is unavailable, it reuses the saved slit and crossing times and solves
+the mean controls and feedback gains fresh. The obstacle-free example uses Clarabel.
+
+The terminal covariance is an upper bound, imposed only for covariance steering.
+Risk is specified per face at each sampled state. The between-step collision check
+uses additional time samples and does not provide a continuous-time safety certificate.
 
 | Block in `covsteer.py` | What it does | Paper |
 |---|---|---|

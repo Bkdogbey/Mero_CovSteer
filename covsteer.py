@@ -19,13 +19,20 @@ Blocks, in the order the method is built up:
     12. main(): run everything
 
 Run:
-    python covsteer.py            # whole pipeline, figures pop up (about 3 min with MOSEK)
-    python covsteer.py --sweep    # also redo the slit-width sweep (about 12 min)
+    python covsteer.py                 # five-stage walkthrough, with static plots
+    python covsteer.py --saved-routes  # optimize controls for saved region schedules
+    python covsteer.py --samples 10000 # shorter Monte Carlo check for rehearsal
+    python covsteer.py --sweep         # also redo the slit-width sweep (MOSEK)
 
 Algorithm 1 needs MOSEK (license at ~/mosek/mosek.lic). Without it, the route
 MOSEK chose is read from results/routes.json and the rest, which is convex once
 the route is fixed, is solved with Clarabel.
-results/ holds the two inputs we read: routes.json and width_sweep.json.
+The presentation follows five questions in main():
+    1. What is the task?
+    2. What happens without feedback?
+    3. How does feedback control the spread?
+    4. How does the vehicle pass the obstacles?
+    5. Do the solutions satisfy the requested constraints?
 
 # ASSUMED = not given in the paper.  # RECONSTRUCTED = read off its figures.
 """
@@ -99,10 +106,20 @@ A_cal, B_cal, D_cal = lift()
 # 4. POLICY: MEAN AND COVARIANCE   (Theorem 1, Eqs. 12-16)
 # =============================================================================
 # Policy:  u_k = v_k + K_k y_k,   y_{k+1} = A y_k + D w_k,   y_0 = x_0 - mu_0
-# y_k is the deviation the noise alone would cause. It does not depend on K, so
+# y_k is the deviation the noise alone would cause. With feedback, it differs
+# from the actual tracking error x_k - mean_k. Its dynamics do not depend on K.
+#
+# Code symbols:
+#     V       planned controls, stacked across all time steps
+#     K       one feedback gain K_k per time step
+#     L       factor of the noise-only covariance: Sigma_Y = L L^T
+#     KL      maps the standard Gaussian randomness to feedback controls
+#     S       factor of the controlled state covariance: Sigma_X = S S^T
+#
 #     mean        X_bar   = A_cal mu_0 + B_cal V            (Eq. 15)  set by V only
 #     covariance  Sigma_X = S S^T,  S = (I + B_cal K) L     (Eq. 16)  set by K only
-# Both are LINEAR in the unknowns (V, K), so the problem stays convex.
+# X_bar is affine in V and S is affine in K. Sigma_X = S S^T is quadratic in K.
+# Using norms of S lets us express the covariance constraints as convex cones.
 
 # Square root of the noise-only covariance:  L L^T = A_cal Sigma_0 A_cal^T + D_cal D_cal^T
 L = np.hstack([A_cal @ np.linalg.cholesky(Sigma_0), D_cal])
@@ -111,30 +128,30 @@ L = np.hstack([A_cal @ np.linalg.cholesky(Sigma_0), D_cal])
 def policy(feedback=True):
     """Unknowns V, K and the mean and covariance they produce, as cvxpy expressions.
     feedback=False fixes K = 0 (open loop, "mean steering")."""
-    V = cp.Variable(N * nu)
+    V = cp.Variable(N * nu)                                         # Eq. 12 mean controls
     if feedback:
-        K = [cp.Variable((nu, nx)) for _ in range(N)]
+        K = [cp.Variable((nu, nx)) for _ in range(N)]               # Eq. 12 feedback gains
         KL = cp.vstack([K[k] @ L[blk(k)] for k in range(N)])    # K times L, block by block
     else:
         K = None
         KL = np.zeros((N * nu, L.shape[1]))
-    X_bar = A_cal @ mu_0 + B_cal @ V                             # Eq. 15
-    S = L + B_cal @ KL                                           # Eq. 16
-    return dict(V=V, K=K, KL=KL, X_bar=X_bar, S=S)
+    X_bar = A_cal @ mu_0 + B_cal @ V                             # Eq. 15 mean trajectory
+    S = L + B_cal @ KL                                           # Eq. 16  state covariance
+    return {"V": V, "K": K, "KL": KL, "X_bar": X_bar, "S": S}
 
 
 def solution(V, K=None, route=None):
-    """The same formulas with numbers: mean and covariance at every step, and the cost."""
+    """Return a dict of the solution's mean, covariance, cost and route."""
     if K is None:
         K = np.zeros((N, nu, nx))
     K = np.asarray(K)
     KL = np.vstack([K[k] @ L[blk(k)] for k in range(N)])
     S = L + B_cal @ KL
-    sol = dict(V=V, K=K, route=route,
-               mus=(A_cal @ mu_0 + B_cal @ V).reshape(N + 1, nx),
-               Sigmas=np.array([S[blk(k)] @ S[blk(k)].T for k in range(N + 1)]),
-               J_mean=float(V @ V),
-               J_cov=float(np.sum(KL**2)))
+    sol = {"V": V, "K": K, "route": route,                                       # policy
+           "mus": (A_cal @ mu_0 + B_cal @ V).reshape(N + 1, nx),
+           "Sigmas": np.array([S[blk(k)] @ S[blk(k)].T for k in range(N + 1)]),
+           "J_mean": float(V @ V),                                                 # mean cost
+           "J_cov": float(np.sum(KL**2))}                                      # covariance cost
     sol["J"] = sol["J_mean"] + sol["J_cov"]
     if route is not None:
         sol["slit"] = "upper" if route[2].any() else "lower"    # region R3 = upper slit
@@ -144,12 +161,9 @@ def solution(V, K=None, route=None):
 # =============================================================================
 # 5. OPEN LOOP (K = 0)
 # =============================================================================
-# With K = 0, S = L: the covariance is L L^T no matter what V is.
-# The controls move the mean, but nothing can shrink the uncertainty.
-
 
 def open_loop():
-    """Least-energy controls V that bring the MEAN to the goal, with no feedback."""
+    """Computes the Least-energy controls V that bring the MEAN to the goal, with no feedback."""
     V = np.linalg.pinv(B_cal[blk(N)]) @ (mu_N - (A_cal @ mu_0)[blk(N)])
     return solution(V)
 
@@ -157,21 +171,17 @@ def open_loop():
 # =============================================================================
 # 6. OPTIMAL COVARIANCE STEERING (closed loop)   Eqs. 17-19
 # =============================================================================
-# Cost (Eq. 17): expected control energy E[sum u_k^T u_k] = ||V||^2 + ||K L||_F^2
-#     (Q = 0, R = I; ASSUMED, the paper does not give them)
-# Terminal mean (Eq. 18a):        E_N X_bar = mu_N
-# Terminal covariance (Eq. 19):   Sigma_xN <= Sigma_N  <=>  ||Sigma_N^{-1/2} S_N||_2 <= 1
-Sigma_N_inv_half = np.diag(1 / np.sqrt(np.diag(Sigma_N)))
-
+Sigma_N_inv_half = np.diag(1 / np.sqrt(np.diag(Sigma_N)))                    # Eq. 19 Terminal covariance constraint: ||Sigma_N^{-1/2} S_N||_2 <= 1
 
 def build(feedback=True, eq19=True):
-    """Policy (block 4) + cost + terminal constraints. eq19=False leaves Eq. 19 out."""
+    """Build the cvxpy problem for optimizing V and K, with or without feedback.
+    """
     P = policy(feedback)
-    P["J"] = cp.sum_squares(P["V"]) + cp.sum_squares(P["KL"])            # Eq. 17
-    P["cons"] = [P["X_bar"][blk(N)] == mu_N,                              # Eq. 18a
+    P["J"] = cp.sum_squares(P["V"]) + cp.sum_squares(P["KL"])            # Eq. 17 Cost function: mean + covariance
+    P["cons"] = [P["X_bar"][blk(N)] == mu_N,                              # Eq. 18a Terminal mean constraint
                  cp.abs(P["V"]) <= V_MAX]
     if feedback:
-        P["cons"] += [cp.abs(K_k) <= K_MAX for K_k in P["K"]]
+        P["cons"] += [cp.abs(K_k) <= K_MAX for K_k in P["K"]]               # 
         if eq19:
             P["cons"].append(cp.sigma_max(Sigma_N_inv_half @ P["S"][blk(N)]) <= 1)  # Eq. 19
     return P
@@ -190,11 +200,11 @@ def has_mosek():
 def solve_convex(feedback=True, geom=None, route=None):
     """Solve when the problem is convex: no obstacles, or obstacles with a fixed route.
     Uses the open-source Clarabel solver (MOSEK is only needed for the mixed-integer step)."""
-    P = build(feedback)
-    cons = P["cons"]
+    P = build(feedback)                                     # P = policy, cost, constraints
+    cons = P["cons"]                                        # constraints on V, K, mean and covariance
     if geom is not None:
         cons = cons + region_constraints(P, geom, route)
-    prob = cp.Problem(cp.Minimize(P["J"]), cons)
+    prob = cp.Problem(cp.Minimize(P["J"]), cons)                # 
     try:
         prob.solve(solver=cp.CLARABEL)
     except cp.error.SolverError:          # Clarabel sometimes errors instead of "infeasible"
@@ -202,49 +212,40 @@ def solve_convex(feedback=True, geom=None, route=None):
     if prob.status not in ("optimal", "optimal_inaccurate"):
         return None
     K = [K_k.value for K_k in P["K"]] if feedback else None
-    return solution(P["V"].value, K, route)
+    return solution(P["V"].value, K, route)                         
 
 
 # =============================================================================
 # 7. CHANCE CONSTRAINTS   Eq. 20
 # =============================================================================
-# The noise is Gaussian (unbounded), so we ask each face a^T x <= b to hold
-# with probability at least 1 - eps. For a Gaussian this is exact:
-#     Pr(a^T x_k > b) <= eps   <=>   a^T mu_k + PHI_INV * std(a^T x_k) <= b
-# i.e. keep the mean PHI_INV = 3.09 standard deviations away from the face.
-# std(a^T x_k) = ||a^T S_k|| is a norm of something linear: a convex cone.
 eps = 1e-3                       # allowed violation probability per face
 PHI_INV = norm.ppf(1 - eps)      # = 3.09
 
 
 def chance_margins(P):
-    """margin[i, k] >= 3.09 * std of p_x (i = 0) or p_y (i = 1) at step k."""
+    """Compute the Gaussian safety margins for each face of the chance constraints."""
     margin = cp.Variable((2, N + 1))
-    cons = [margin[i] >= PHI_INV * cp.norm(P["S"][i::nx], 2, axis=1) for i in (0, 1)]
+    cons = [margin[i] >= PHI_INV * cp.norm(P["S"][i::nx], 2, axis=1) for i in (0, 1)]   # we take the 2D position coordinates only, i = 0, 1
     return margin, cons
 
 
 # =============================================================================
 # 8. OBSTACLES: REGION SELECTION   Eqs. 22-25
 # =============================================================================
-# The free space is not convex (pass above OR below), so cover it with
-# overlapping boxes R1..R4 (Eqs. 22-23). Binary M[r, k] = 1 means x_k and
-# x_{k+1} are both in box r, so the whole segment is. One box per step (Eq. 24).
-# "If M[r, k] = 1, the chance constraints of box r hold" is big-M (Eq. 25):
-#     a^T mu + margin - b <= BIG_M * (1 - M[r, k])
+
 WORKSPACE = (-12.0, 2.0, -5.0, 5.0)    # map edges (x_min, x_max, y_min, y_max)
-BIG_M = 30.0                           # larger than any left-hand side on this map
+BIG_M = 30.0                           #
 
 
 def double_slit(top_gap=0.5):
-    """Wall at x in [-6, -4] with two slits. RECONSTRUCTED from the paper's Figs. 2-4, 6."""
+    """ Return the geometry of the double-slit obstacle course, with a given upper slit width."""
     top = 1.0 + top_gap
-    return dict(top_gap=top_gap,
-                obstacles=[(-6, -4, top, 5), (-6, -4, -1.4, 1.0), (-6, -4, -5, -3)],
-                regions=[(-12, -6, -5, 5),       # R1: left of the wall
-                         (-12, 2, -3, -1.4),     # R2: band through the lower slit (1.6 wide)
-                         (-12, 2, 1.0, top),     # R3: band through the upper slit
-                         (-4, 2, -5, 5)])        # R4: right of the wall
+    return {"top_gap": top_gap,
+            "obstacles": [(-6, -4, top, 5), (-6, -4, -1.4, 1.0), (-6, -4, -5, -3)],
+            "regions": [(-12, -6, -5, 5),       # R1: left of the wall
+                        (-12, 2, -3, -1.4),     # R2: band through the lower slit (1.6 wide)
+                        (-12, 2, 1.0, top),     # R3: band through the upper slit
+                        (-4, 2, -5, 5)]}        # R4: right of the wall
 
 
 def faces(box):
@@ -254,8 +255,7 @@ def faces(box):
 
 
 def region_constraints(P, geom, M, forbid=()):
-    """Chance constraints (block 7) inside the selected boxes.
-    M is a boolean variable (solver picks the route) or a 0/1 array (route fixed)."""
+    """ Add constraints that the mean and covariance stay inside the chosen region at each step."""
     mean = [P["X_bar"][0::nx], P["X_bar"][1::nx]]      # mean p_x and p_y, k = 0..N
     margin, cons = chance_margins(P)
 
@@ -266,7 +266,7 @@ def region_constraints(P, geom, M, forbid=()):
         cons.append(cp.sum(M, axis=0) == 1)            # Eq. 24: one box per step
         cons += [M[r] == 0 for r in forbid]
 
-    for r, box in enumerate(geom["regions"]):
+    for r, box in enumerate(geom["regions"]):                   # 
         for i, sign, b in faces(box):
             for k in (slice(0, N), slice(1, N + 1)):   # both x_k and x_{k+1}
                 cons.append(sign * mean[i][k] + margin[i][k] - b <= BIG_M * (1 - M[r]))  # Eq. 25
@@ -276,6 +276,10 @@ def region_constraints(P, geom, M, forbid=()):
 # =============================================================================
 # 9. ALGORITHM 1: MIXED-INTEGER SOLVE
 # =============================================================================
+# This is the solver implementation behind the region choice above:
+# choose a region schedule, then optimize V and K for it. Without MOSEK,
+# plan() loads a saved schedule and still optimizes V and K with Clarabel.
+#
 # MOSEK solves mixed-integer SOCPs but not mixed-integer SDPs, and Eq. 19 is an
 # SDP constraint. We use:   ||G||_2 <= 1   <=>   ||z^T G|| <= 1 for every unit z.
 #   Lower bound: keep only a few directions z (a relaxation), solve the MISOCP.
@@ -284,7 +288,7 @@ def region_constraints(P, geom, M, forbid=()):
 MOSEK_OPTS = {"MSK_DPAR_MIO_MAX_TIME": 600.0, "MSK_DPAR_MIO_TOL_REL_GAP": 1e-6}
 
 # Starting directions: the 4 axes and the 12 diagonals (e_i +- e_j) / sqrt(2)
-CUT_DIRS = list(np.eye(nx))
+CUT_DIRS = list(np.eye(nx))              # CUT_D
 for i in range(nx):
     for j in range(i + 1, nx):
         CUT_DIRS.append((np.eye(nx)[i] + np.eye(nx)[j]) / np.sqrt(2))
@@ -292,7 +296,7 @@ for i in range(nx):
 
 
 def algorithm1(geom, feedback=True, forbid=(), tol=1e-4, max_iter=20):
-    """Optimal route and policy through the regions of geom. Needs MOSEK. None if infeasible."""
+    """ Mixed-integer solve for the region schedule and the controls, with or without feedback."""
     P = build(feedback, eq19=False)
     M = cp.Variable((len(geom["regions"]), N), boolean=True)
     cons = P["cons"] + region_constraints(P, geom, M, forbid)
@@ -329,15 +333,21 @@ def route_from_str(text):
     return route
 
 
-def plan(geom, feedback=True):
-    """Run Algorithm 1 (MOSEK). Without MOSEK, reuse the saved route and solve the rest."""
+def plan(geom, feedback=True, saved_routes=False):
+    """
+    """
     start = time.time()
-    if has_mosek():
+    if not saved_routes and has_mosek():
+        mode = "route and controls optimized (MOSEK + Clarabel)"
         sol = algorithm1(geom, feedback)
     else:
+        mode = "saved region schedule; controls optimized (Clarabel)"
         routes = json.loads((RESULTS / "routes.json").read_text())
         name = f"slit{geom['top_gap']}_{'cov' if feedback else 'mean'}"
         sol = solve_convex(feedback, geom, route_from_str(routes[name]))
+    if sol is None:
+        raise RuntimeError(f"No solution for slit width {geom['top_gap']}, feedback={feedback}.")
+    sol["mode"] = mode
     sol["time"] = time.time() - start
     return sol
 
@@ -375,16 +385,20 @@ def verify(sol, geom, n=200_000):
     """Simulate n runs and compare with what the optimizer promised."""
     xs, us = simulate(sol, n, seed=8)
 
-    # how often each face of the chosen boxes is crossed (should be about eps)
-    worst_face = 0.0
+    # Active faces can have violation probability near eps; others have slack.
+    # Finite Monte Carlo frequencies fluctuate around their true probabilities.
+    worst_face, worst_slack = 0.0, -np.inf
     for k in range(N):
         box = geom["regions"][sol["route"][:, k].argmax()]
         for i, sign, b in faces(box):
-            for x in (xs[k], xs[k + 1]):
-                worst_face = max(worst_face, np.mean(sign * x[:, i] > b))
+            for kk in (k, k + 1):
+                worst_face = max(worst_face, np.mean(sign * xs[kk, :, i] > b))
+                std = np.sqrt(sol["Sigmas"][kk, i, i])
+                slack = sign * sol["mus"][kk, i] + PHI_INV * std - b
+                worst_slack = max(worst_slack, slack)
 
-    # collisions at the time steps, and along the true path between them
-    # (acceleration is constant between steps, so the path is a parabola)
+    # Check sampled states and extra points on the held-acceleration path.
+    # This empirical check is not a continuous-time safety certificate.
     hit_steps = np.any([collides(x[:, :2], geom) for x in xs], axis=0)
     hit_path = hit_steps.copy()
     for k in range(N):
@@ -396,10 +410,12 @@ def verify(sol, geom, n=200_000):
     return {"route": sol["slit"] + " slit",
             "J, optimizer": f"{sol['J']:.2f}",
             "J, simulated": f"{np.sum(us**2, axis=(0, 2)).mean():.2f}",
+            "terminal mean error": f"{np.linalg.norm(sol['mus'][-1] - mu_N):.1e}",
             "terminal covariance excess (<= 0 is met)": f"{cov_excess:+.0e}",
+            "worst chance slack (<= 0 is met)": f"{worst_slack:+.1e}",
             f"worst face violation (allowed {eps})": f"{worst_face:.4f}",
             "collisions at time steps": f"{hit_steps.mean():.4f}",
-            "collisions along the path": f"{hit_path.mean():.4f}"}
+            "collisions including between-step samples": f"{hit_path.mean():.4f}"}
 
 
 def table(columns):
@@ -534,41 +550,92 @@ def show():
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--sweep", action="store_true", help="redo the slit-width sweep")
+    parser = argparse.ArgumentParser(description="Five-stage covariance-steering walkthrough")
+    parser.add_argument("--saved-routes", action="store_true",
+                        help="optimize controls for saved region schedules using Clarabel")
+    parser.add_argument("--samples", type=int, default=200_000,
+                        help="Monte Carlo runs per solution (default: 200000)")
+    parser.add_argument("--sweep", action="store_true", help="also redo the width sweep (MOSEK)")
     args = parser.parse_args()
-    print("Solver:", "MOSEK" if has_mosek() else "Clarabel, with saved routes (no MOSEK)")
+    if args.samples < 2:
+        parser.error("--samples must be at least 2")
+    saved_routes = args.saved_routes or not has_mosek()
+    if args.sweep and (args.saved_routes or not has_mosek()):
+        parser.error("--sweep needs licensed MOSEK and cannot be combined with --saved-routes")
+    print("Obstacle solve mode:", "SAVED REGION SCHEDULES; controls optimized with Clarabel"
+          if saved_routes else "ROUTE AND CONTROLS OPTIMIZED with MOSEK + Clarabel")
+    if saved_routes:
+        print("The slit and crossing times come from routes.json; V and K are solved fresh.")
 
-    print("\n1. No obstacles: open loop vs. optimal covariance steering")
+    # 1. TASK: where must the vehicle go, and how certain must its arrival be?
+    print("\n1. Task: reach the goal in 4 seconds while controlling uncertainty")
+    print("   State: [px, py, vx, vy]; control: [ax, ay]; Gaussian process noise.")
+    print(f"   Start mean: {mu_0}; goal mean: {mu_N}")
+    print(f"   Target variance bounds: {np.diag(Sigma_N)}")
+    print("   Distributions and energy weights are assumed; geometry is reconstructed.")
+
+    # 2. BASELINE: planned controls move the mean but cannot change the spread.
+    print("\n2. Without feedback: the mean reaches the goal, but uncertainty stays large")
     ol = open_loop()
+    print(f"   Open-loop J = {ol['J']:.2f}; final x-position variance = "
+          f"{ol['Sigmas'][-1][0, 0]:.5f} (target <= {Sigma_N[0, 0]})")
+
+    # 3. FEEDBACK: V moves the mean; K changes the covariance through S.
+    print("\n3. Add feedback: optimize u_k = v_k + K_k y_k")
+    print("   y is the noise-only auxiliary state. S maps randomness to state deviations.")
+    print("   Minimize expected energy ||V||^2 + ||KL||_F^2, with covariance S S^T.")
     cl = solve_convex(feedback=True)
-    for name, sol in [("open loop", ol), ("covariance steering", cl)]:
-        print(f"   {name:20s} J = {sol['J']:.2f}   final variance {sol['Sigmas'][-1][0, 0]:.3f}"
-              f"   (target {Sigma_N[0, 0]})")
+    if cl is None:
+        raise RuntimeError("The obstacle-free covariance-steering problem could not be solved.")
+    print(f"   Feedback J = {cl['J']:.2f}; final x-position variance = "
+          f"{cl['Sigmas'][-1][0, 0]:.5f}")
     fig_panels([("open loop (K = 0)", ol), ("optimal covariance steering", cl)])
-    fig_regions(double_slit(0.5))
     show()
 
+    # 4. OBSTACLES: the selected region constrains both ends of each interval.
+    print("\n4. Add obstacles: select regions and keep a Gaussian margin from each face")
+    print("   Region sequence: left -> (lower slit or upper slit) -> right.")
+    print(f"   Face condition: a^T mean + {PHI_INV:.2f} * std(a^T x) <= b.")
+    print(f"   Risk {eps} applies per face per sampled state, not to the whole trip.")
+    fig_regions(double_slit(0.5))
+    show()
     sols = {}
-    for step, width in [(2, 0.5), (3, 0.2)]:
-        print(f"\n{step}. Double slit, upper slit {width} wide")
+    for width in (0.5, 0.2):
+        print(f"\n   Upper slit width {width}:")
         panels = []
         for feedback, name in [(False, "mean steering"), (True, "covariance steering")]:
-            sol = plan(double_slit(width), feedback)
+            print(f"   Solving {name} ...", flush=True)
+            sol = plan(double_slit(width), feedback, saved_routes=saved_routes)
             sols[width, feedback] = sol
-            print(f"   {name:20s} {sol['slit']} slit, J = {sol['J']:.2f}   ({sol['time']:.0f} s)")
+            print(f"   {sol['slit']} slit, J = {sol['J']:.2f} ({sol['time']:.1f} s); {sol['mode']}")
             panels.append((f"{name}: {sol['slit']} slit, J = {sol['J']:.1f}", sol))
         fig_panels(panels, double_slit(width))
         show()
 
-    fig_sweep(sweep() if args.sweep else None)
+    # 5. EVIDENCE: first the main result, then the detailed numerical checks.
+    print("\n5. Results: route, control energy, and terminal covariance bound\n")
+    print("| slit width | planner | route | energy J | terminal covariance bound |")
+    print("|---|---|---|---:|---|")
+    for (width, feedback), sol in sols.items():
+        excess = np.linalg.eigvalsh(sol["Sigmas"][-1] - Sigma_N).max()
+        status = "met" if excess <= 1e-6 else "exceeds bound"
+        if not feedback:
+            status += " (not imposed)"
+        name = "covariance" if feedback else "mean"
+        print(f"| {width} | {name} | {sol['slit']} | {sol['J']:.2f} | {status} |")
+    print("Covariance checks use eigenvalue tolerance 1e-6; mean steering omits this bound.")
 
-    print("\n4. Monte Carlo check, 200,000 runs per solution\n")
+    print(f"\nDetailed verification: {args.samples:,} Monte Carlo runs per solution\n")
+    print("Zero observed collisions does not prove zero risk. Between-step checks use extra samples.")
     columns = {}
     for (width, feedback), sol in sols.items():
         name = f"slit {width}, {'covariance' if feedback else 'mean'}"
-        columns[name] = verify(sol, double_slit(width))
+        columns[name] = verify(sol, double_slit(width), n=args.samples)
     print(table(columns))
+
+    if args.sweep:
+        print("\nExtra analysis: optimize the routes across a range of slit widths")
+        fig_sweep(sweep())
     plt.show()
 
 
